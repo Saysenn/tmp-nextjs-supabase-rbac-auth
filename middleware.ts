@@ -1,5 +1,18 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import {
+  ROUTE_ACCESS,
+  PROTECTED_ROUTES,
+  AUTH_ROUTES,
+  LOGIN_REDIRECT,
+  DEFAULT_REDIRECT,
+  UNAUTHORIZED_REDIRECT,
+  DEFAULT_ROLE,
+  ROLES,
+} from './lib/rbac/config';
+
+// Type for role
+type Role = (typeof ROLES)[keyof typeof ROLES];
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -15,7 +28,7 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value));
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           supabaseResponse = NextResponse.next({
             request,
           });
@@ -36,35 +49,60 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const url = request.nextUrl.clone();
+  const pathname = request.nextUrl.pathname;
 
-  // Protected routes - redirect to sign-in if not authenticated
-  const protectedRoutes = ['/dashboard'];
-  const isProtectedRoute = protectedRoutes.some((route) =>
-    request.nextUrl.pathname.startsWith(route)
+  // Helper function to create redirect with cookies
+  const createRedirect = (path: string) => {
+    url.pathname = path;
+    const redirectResponse = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      redirectResponse.cookies.set(cookie.name, cookie.value, cookie);
+    });
+    return redirectResponse;
+  };
+
+  // Check if current route is protected (requires authentication)
+  const isProtectedRoute = PROTECTED_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(route + '/')
   );
 
+  // Check if current route is an auth route (should redirect if authenticated)
+  const isAuthRoute = AUTH_ROUTES.some((route) => pathname === route);
+
+  // If not authenticated and trying to access protected route
   if (!user && isProtectedRoute) {
-    url.pathname = '/auth/signin';
-    const redirectResponse = NextResponse.redirect(url);
-    // Copy cookies from supabase response to redirect response
-    supabaseResponse.cookies.getAll().forEach((cookie) => {
-      redirectResponse.cookies.set(cookie.name, cookie.value, cookie);
-    });
-    return redirectResponse;
+    return createRedirect(LOGIN_REDIRECT);
   }
 
-  // Auth routes - redirect to dashboard if already authenticated
-  const authRoutes = ['/auth/signin', '/auth/signup'];
-  const isAuthRoute = authRoutes.some((route) => request.nextUrl.pathname === route);
-
+  // If authenticated and trying to access auth routes, redirect to dashboard
   if (user && isAuthRoute) {
-    url.pathname = '/dashboard';
-    const redirectResponse = NextResponse.redirect(url);
-    // Copy cookies from supabase response to redirect response
-    supabaseResponse.cookies.getAll().forEach((cookie) => {
-      redirectResponse.cookies.set(cookie.name, cookie.value, cookie);
-    });
-    return redirectResponse;
+    return createRedirect(DEFAULT_REDIRECT);
+  }
+
+  // Role-based access control for authenticated users
+  if (user && isProtectedRoute) {
+    // Get user's role from metadata
+    const userRole = (user.user_metadata?.role as Role) || DEFAULT_ROLE;
+
+    // Check role-based route access
+    // Sort routes by specificity (longer paths first)
+    const sortedRoutes = Object.keys(ROUTE_ACCESS).sort(
+      (a, b) => b.length - a.length
+    );
+
+    // Find the most specific matching route
+    for (const route of sortedRoutes) {
+      if (pathname === route || pathname.startsWith(route + '/')) {
+        const allowedRoles = ROUTE_ACCESS[route];
+
+        if (allowedRoles && !allowedRoles.includes(userRole)) {
+          // User doesn't have permission - redirect to unauthorized page
+          return createRedirect(UNAUTHORIZED_REDIRECT);
+        }
+        // Found matching route and user has access - break out of loop
+        break;
+      }
+    }
   }
 
   // IMPORTANT: You *must* return the supabaseResponse object as it is. If you're

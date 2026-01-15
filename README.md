@@ -8,7 +8,8 @@ A production-ready authentication template built with Next.js 16 and Supabase, f
 - Email/password authentication with email verification
 - Google OAuth integration
 - Two-factor authentication (2FA) with TOTP
-- Protected routes with middleware
+- **Role-Based Access Control (RBAC)** - Enterprise-grade, single-file configuration
+- Protected routes with middleware (authentication + authorization)
 - Automatic session management and refresh
 - Secure cookie-based sessions
 
@@ -149,12 +150,22 @@ propann/
 ├── context/
 │   └── UserContext.tsx           # User authentication context
 ├── hooks/
-│   └── useSupabaseUser.ts        # Auth state hook
+│   ├── useSupabaseUser.ts        # Auth state hook
+│   └── useRBAC.ts                # Role-based access control hook
 ├── lib/
 │   ├── auth.ts                   # Auth helper functions
+│   ├── rbac/                     # Role-Based Access Control
+│   │   ├── config.ts             # ⭐ EDIT THIS - Roles, permissions, routes
+│   │   ├── types.ts              # TypeScript types
+│   │   ├── utils.ts              # Helper functions
+│   │   └── index.ts              # Re-exports
 │   └── supabase/
 │       ├── browser-client.ts     # Browser Supabase client
 │       └── server-client.ts      # Server Supabase client
+├── components/
+│   └── rbac/                     # RBAC guard components
+│       ├── RoleGuard.tsx         # Role-based rendering
+│       └── PermissionGuard.tsx   # Permission-based rendering
 ├── docs/
 │   ├── done/                     # Completed features documentation
 │   ├── in-progress/              # Current work documentation
@@ -203,14 +214,138 @@ To disable 2FA:
 2. Click "Disable Two-Factor Authentication"
 3. Confirm the action
 
+## Role-Based Access Control (RBAC)
+
+This template includes a comprehensive, enterprise-grade role-based authentication system. **Everything is controlled from ONE file:** `lib/rbac/config.ts`.
+
+### Quick Start - Adding Roles to Your Project
+
+**Step 1:** Edit `lib/rbac/config.ts` to define your roles:
+
+```typescript
+export const ROLES = {
+  SUPER_ADMIN: 'super_admin',
+  ADMIN: 'admin',
+  MANAGER: 'manager',
+  USER: 'user',
+  // Add your custom roles here
+} as const;
+```
+
+**Step 2:** Define which roles can access which routes:
+
+```typescript
+export const ROUTE_ACCESS = {
+  '/dashboard/admin': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+  '/dashboard/reports': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
+  '/dashboard': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER, ROLES.USER],
+};
+```
+
+**Step 3:** Define granular permissions:
+
+```typescript
+export const PERMISSIONS = {
+  'users:delete': [ROLES.SUPER_ADMIN],
+  'users:write': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+  'reports:view': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
+};
+```
+
+**That's it!** The middleware automatically enforces route access, and you can use guards in components.
+
+### Assigning Roles to Users
+
+Roles are stored in Supabase `user_metadata`. Set them via:
+
+**Option 1: Supabase Dashboard**
+1. Go to Authentication → Users
+2. Click on a user
+3. Edit `raw_user_meta_data` and add `"role": "admin"`
+
+**Option 2: SQL Query**
+```sql
+UPDATE auth.users
+SET raw_user_meta_data = raw_user_meta_data || '{"role": "admin"}'
+WHERE email = 'admin@example.com';
+```
+
+**Option 3: Admin API (for programmatic assignment)**
+```typescript
+// Server-side only - use service_role key
+const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+  user_metadata: { role: 'manager' }
+});
+```
+
+### Using RBAC in Components
+
+**Check permissions with the hook:**
+```tsx
+import { useRBAC } from '@/hooks/useRBAC';
+
+function AdminPanel() {
+  const { role, hasPermission, hasRole, canAccess } = useRBAC();
+
+  if (!hasPermission('users:delete')) {
+    return <p>You don't have permission to delete users.</p>;
+  }
+
+  return <DeleteUserButton />;
+}
+```
+
+**Use guard components:**
+```tsx
+import { RoleGuard } from '@/components/rbac/RoleGuard';
+import { PermissionGuard } from '@/components/rbac/PermissionGuard';
+
+// Show only to specific roles
+<RoleGuard roles={['admin', 'super_admin']}>
+  <AdminSettings />
+</RoleGuard>
+
+// Show only to users with specific permission
+<PermissionGuard permission="users:delete" fallback={<p>Access denied</p>}>
+  <DeleteUserButton />
+</PermissionGuard>
+```
+
+### RBAC Architecture
+
+```
+lib/rbac/
+├── config.ts        # EDIT THIS FILE - All roles, permissions, routes
+├── types.ts         # TypeScript types (auto-generated from config)
+├── utils.ts         # Helper functions (hasRole, hasPermission, etc.)
+└── index.ts         # Re-exports for clean imports
+
+components/rbac/
+├── RoleGuard.tsx    # Show/hide children based on role
+└── PermissionGuard.tsx  # Show/hide children based on permission
+
+hooks/
+└── useRBAC.ts       # Hook for role/permission checks
+```
+
+### Security Model
+
+1. **Server-side enforcement** - Middleware checks role on every request
+2. **Client-side UX** - Guards hide UI elements users can't access
+3. **Defense in depth** - Both layers work together
+4. **No role spoofing** - Roles are set by admins, not users during signup
+5. **Default role** - New users get `DEFAULT_ROLE` (configurable, defaults to `user`)
+
 ## Protected Routes
 
 The following routes require authentication:
 - `/dashboard` - Main dashboard
-- `/dashboard/profile` - Profile settings
-- `/dashboard/security` - Security settings
+- `/dashboard/settings` - User settings
+- `/dashboard/admin` - Admin only (admin, super_admin roles)
+- `/dashboard/analytics` - Managers and above
 
 Unauthenticated users are automatically redirected to `/auth/signin`.
+Users without proper role are redirected to `/unauthorized`.
 
 ## Middleware
 

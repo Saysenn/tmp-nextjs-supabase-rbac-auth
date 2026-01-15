@@ -1,4 +1,5 @@
 import { getSupabaseBrowserClient } from "./supabase/browser-client";
+import { DEFAULT_ROLE } from "./rbac/config";
 
 export const signUp = async (email: string, password: string) => {
   const supabase = getSupabaseBrowserClient();
@@ -7,6 +8,9 @@ export const signUp = async (email: string, password: string) => {
     password,
     options: {
       emailRedirectTo: `${window.location.origin}/auth/callback`,
+      data: {
+        role: DEFAULT_ROLE,  // New users get 'pending' role by default
+      },
     }
   });
 };

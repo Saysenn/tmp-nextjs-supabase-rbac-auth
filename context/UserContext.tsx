@@ -1,19 +1,27 @@
 'use client';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { useSupabaseUser } from '../hooks/useSupabaseUser';
+import { getRoleFromUser, type Role } from '../lib/rbac';
 
 interface UserContextType {
   user: User | null;
   loading: boolean;
+  role: Role | null;
 }
 
 const UserContext = createContext<UserContextType | null>(null);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const { user, loading } = useSupabaseUser();
+
+  const role = useMemo<Role | null>(() => {
+    if (!user) return null;
+    return getRoleFromUser(user);
+  }, [user]);
+
   return (
-    <UserContext.Provider value={{ user, loading }}>
+    <UserContext.Provider value={{ user, loading, role }}>
       {children}
     </UserContext.Provider>
   );
