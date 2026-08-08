@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { useUser } from '@/context/UserContext';
 import { useRBAC } from '@/hooks/useRBAC';
+import { getRoleDisplayName } from '@/lib/rbac/utils';
 
 export default function UnauthorizedPage() {
   const { user } = useUser();
-  const { role } = useRBAC();
+  const { roles } = useRBAC();
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
@@ -31,10 +32,13 @@ export default function UnauthorizedPage() {
         {/* Title */}
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Access Denied</h1>
         <p className="text-gray-600 mb-8">
-          You don't have permission to access this page.
-          {role && (
+          You don&apos;t have permission to access this page.
+          {roles.length > 0 && (
             <span className="block mt-2 text-sm">
-              Your current role: <span className="font-medium text-gray-900">{role}</span>
+              Your current role(s):{' '}
+              <span className="font-medium text-gray-900">
+                {roles.map(getRoleDisplayName).join(', ')}
+              </span>
             </span>
           )}
         </p>

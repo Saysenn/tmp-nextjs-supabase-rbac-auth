@@ -1,34 +1,37 @@
 import { ROLES, PERMISSIONS } from './config';
 
-// Extract role values from ROLES constant
-export type Role = (typeof ROLES)[keyof typeof ROLES];
+// Role name type (ADMIN, AGENT, USER, etc.)
+export type RoleName = keyof typeof ROLES;
 
-// Extract permission keys from PERMISSIONS constant
-export type Permission = keyof typeof PERMISSIONS;
+// Permission type
+export type Permission = (typeof PERMISSIONS)[number];
 
 // Route access configuration type
 export interface RouteAccessConfig {
   path: string;
-  roles: Role[];
-  exact?: boolean; // If true, only exact path matches; if false (default), includes sub-routes
+  roles: RoleName[];
+  exact?: boolean;
 }
 
 // RBAC context type for the hook
 export interface RBACContext {
-  role: Role | null;
+  roles: RoleName[];
   permissions: Permission[];
-  hasRole: (role: Role | Role[]) => boolean;
+  hasRole: (role: RoleName | RoleName[]) => boolean;
   hasPermission: (permission: Permission) => boolean;
-  isRoleAtLeast: (minimumRole: Role) => boolean;
+  hasAnyPermission: (permissions: Permission[]) => boolean;
+  hasAllPermissions: (permissions: Permission[]) => boolean;
+  isRoleAtLeast: (minimumRole: RoleName) => boolean;
   canAccess: (pathname: string) => boolean;
 }
 
-// User with role type (extends Supabase User metadata)
-export interface UserWithRole {
+// User with roles type (extends Supabase User metadata)
+// Supports both single role (string) and multiple roles (array)
+export interface UserWithRoles {
   id: string;
   email?: string;
   user_metadata: {
-    role?: Role;
+    role?: string | string[];  // Can be "ADMIN" or ["ADMIN", "AGENT"]
     full_name?: string;
     avatar_url?: string;
     [key: string]: unknown;
@@ -38,12 +41,15 @@ export interface UserWithRole {
 // Guard component props
 export interface RoleGuardProps {
   children: React.ReactNode;
-  roles: Role | Role[];
+  role?: RoleName;
+  roles?: RoleName[];
   fallback?: React.ReactNode;
 }
 
 export interface PermissionGuardProps {
   children: React.ReactNode;
-  permission: Permission;
+  permission?: Permission;
+  permissions?: Permission[];
+  requireAll?: boolean;  // If true, user needs ALL permissions; if false (default), ANY permission
   fallback?: React.ReactNode;
 }

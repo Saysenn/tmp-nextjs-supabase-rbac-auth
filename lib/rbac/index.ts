@@ -7,7 +7,6 @@ export {
   DEFAULT_ROLE,
   DEFAULT_REDIRECT,
   UNAUTHORIZED_REDIRECT,
-  PENDING_REDIRECT,
   LOGIN_REDIRECT,
   PROTECTED_ROUTES,
   AUTH_ROUTES,
@@ -16,26 +15,29 @@ export {
 
 // Types
 export type {
-  Role,
+  RoleName,
   Permission,
   RouteAccessConfig,
   RBACContext,
-  UserWithRole,
+  UserWithRoles,
   RoleGuardProps,
   PermissionGuardProps,
 } from './types';
 
 // Utility functions
 export {
-  getRoleLevel,
+  getUserRoles,
+  getUserPermissions,
   hasRole,
-  isRoleAtLeast,
   hasPermission,
-  getPermissionsForRole,
+  hasAnyPermission,
+  hasAllPermissions,
+  isRoleAtLeast,
   canAccessRoute,
-  getRoleFromUser,
+  getAllRoles,
+  getRolePermissions,
+  isValidRole,
+  getRoleDisplayName,
   isProtectedRoute,
   isAuthRoute,
-  getAllRoles,
-  isValidRole,
 } from './utils';

@@ -2,12 +2,12 @@
 import { createContext, useContext, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
 import { useSupabaseUser } from '../hooks/useSupabaseUser';
-import { getRoleFromUser, type Role } from '../lib/rbac';
+import { getUserRoles, type RoleName } from '../lib/rbac';
 
 interface UserContextType {
   user: User | null;
   loading: boolean;
-  role: Role | null;
+  roles: RoleName[];
 }
 
 const UserContext = createContext<UserContextType | null>(null);
@@ -15,13 +15,12 @@ const UserContext = createContext<UserContextType | null>(null);
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const { user, loading } = useSupabaseUser();
 
-  const role = useMemo<Role | null>(() => {
-    if (!user) return null;
-    return getRoleFromUser(user);
+  const roles = useMemo<RoleName[]>(() => {
+    return getUserRoles(user);
   }, [user]);
 
   return (
-    <UserContext.Provider value={{ user, loading, role }}>
+    <UserContext.Provider value={{ user, loading, roles }}>
       {children}
     </UserContext.Provider>
   );

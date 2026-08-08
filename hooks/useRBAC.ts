@@ -1,16 +1,18 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useUser } from '../context/UserContext';
 import {
-  type Role,
+  type RoleName,
   type Permission,
-  getRoleFromUser,
+  getUserRoles,
+  getUserPermissions,
   hasRole as checkHasRole,
   hasPermission as checkHasPermission,
+  hasAnyPermission as checkHasAnyPermission,
+  hasAllPermissions as checkHasAllPermissions,
   isRoleAtLeast as checkIsRoleAtLeast,
   canAccessRoute as checkCanAccessRoute,
-  getPermissionsForRole,
 } from '../lib/rbac';
 
 /**
@@ -18,16 +20,29 @@ import {
  *
  * @example
  * ```tsx
- * const { role, hasRole, hasPermission, canAccess } = useRBAC();
+ * const { roles, hasRole, hasPermission, canAccess } = useRBAC();
  *
- * if (hasPermission('users:delete')) {
+ * // Check single permission
+ * if (hasPermission('User:Delete')) {
  *   // Show delete button
  * }
  *
- * if (hasRole(['admin', 'super_admin'])) {
+ * // Check multiple permissions (any)
+ * if (hasAnyPermission(['User:Read', 'User:Write'])) {
+ *   // Show user section
+ * }
+ *
+ * // Check role
+ * if (hasRole('ADMIN')) {
  *   // Show admin panel
  * }
  *
+ * // Check multiple roles
+ * if (hasRole(['ADMIN', 'AGENT'])) {
+ *   // Show management panel
+ * }
+ *
+ * // Check route access
  * if (canAccess('/dashboard/admin')) {
  *   // Show admin link
  * }
@@ -36,46 +51,72 @@ import {
 export function useRBAC() {
   const { user, loading } = useUser();
 
-  const role = useMemo<Role | null>(() => {
-    if (!user) return null;
-    return getRoleFromUser(user);
+  // Get user's roles (supports multiple roles)
+  const roles = useMemo<RoleName[]>(() => {
+    return getUserRoles(user);
   }, [user]);
 
+  // Get all permissions from all user's roles
   const permissions = useMemo<Permission[]>(() => {
-    if (!role) return [];
-    return getPermissionsForRole(role);
-  }, [role]);
+    return getUserPermissions(user);
+  }, [user]);
 
-  const hasRole = useMemo(() => {
-    return (requiredRole: Role | Role[]): boolean => {
-      return checkHasRole(role, requiredRole);
-    };
-  }, [role]);
+  // Check if user has a specific role (or any of multiple roles)
+  const hasRole = useCallback(
+    (role: RoleName | RoleName[]): boolean => {
+      return checkHasRole(user, role);
+    },
+    [user]
+  );
 
-  const hasPermission = useMemo(() => {
-    return (permission: Permission): boolean => {
-      return checkHasPermission(role, permission);
-    };
-  }, [role]);
+  // Check if user has a specific permission
+  const hasPermission = useCallback(
+    (permission: Permission): boolean => {
+      return checkHasPermission(user, permission);
+    },
+    [user]
+  );
 
-  const isRoleAtLeast = useMemo(() => {
-    return (minimumRole: Role): boolean => {
-      return checkIsRoleAtLeast(role, minimumRole);
-    };
-  }, [role]);
+  // Check if user has ANY of the specified permissions
+  const hasAnyPermission = useCallback(
+    (permissionsToCheck: Permission[]): boolean => {
+      return checkHasAnyPermission(user, permissionsToCheck);
+    },
+    [user]
+  );
 
-  const canAccess = useMemo(() => {
-    return (pathname: string): boolean => {
-      return checkCanAccessRoute(role, pathname);
-    };
-  }, [role]);
+  // Check if user has ALL of the specified permissions
+  const hasAllPermissions = useCallback(
+    (permissionsToCheck: Permission[]): boolean => {
+      return checkHasAllPermissions(user, permissionsToCheck);
+    },
+    [user]
+  );
+
+  // Check if user's highest role is at least the specified role
+  const isRoleAtLeast = useCallback(
+    (minimumRole: RoleName): boolean => {
+      return checkIsRoleAtLeast(user, minimumRole);
+    },
+    [user]
+  );
+
+  // Check if user can access a specific route
+  const canAccess = useCallback(
+    (pathname: string): boolean => {
+      return checkCanAccessRoute(user, pathname);
+    },
+    [user]
+  );
 
   return {
-    role,
+    roles,
     permissions,
     loading,
     hasRole,
     hasPermission,
+    hasAnyPermission,
+    hasAllPermissions,
     isRoleAtLeast,
     canAccess,
   };

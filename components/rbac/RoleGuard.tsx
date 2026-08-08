@@ -1,11 +1,12 @@
 'use client';
 
 import { useRBAC } from '../../hooks/useRBAC';
-import type { Role } from '../../lib/rbac';
+import type { RoleName } from '../../lib/rbac';
 
 interface RoleGuardProps {
   children: React.ReactNode;
-  roles: Role | Role[];
+  role?: RoleName;
+  roles?: RoleName[];
   fallback?: React.ReactNode;
 }
 
@@ -15,17 +16,17 @@ interface RoleGuardProps {
  * @example
  * ```tsx
  * // Single role
- * <RoleGuard roles="admin">
+ * <RoleGuard role="ADMIN">
  *   <AdminPanel />
  * </RoleGuard>
  *
- * // Multiple roles
- * <RoleGuard roles={['admin', 'super_admin']} fallback={<p>Access denied</p>}>
- *   <AdminSettings />
+ * // Multiple roles (user needs ANY of these)
+ * <RoleGuard roles={['ADMIN', 'AGENT']} fallback={<p>Access denied</p>}>
+ *   <ManagementPanel />
  * </RoleGuard>
  * ```
  */
-export function RoleGuard({ children, roles, fallback = null }: RoleGuardProps) {
+export function RoleGuard({ children, role, roles, fallback = null }: RoleGuardProps) {
   const { hasRole, loading } = useRBAC();
 
   // Don't render anything while loading
@@ -33,8 +34,11 @@ export function RoleGuard({ children, roles, fallback = null }: RoleGuardProps) 
     return null;
   }
 
+  // Determine which roles to check
+  const rolesToCheck = role ? [role] : roles || [];
+
   // Check if user has required role
-  if (!hasRole(roles)) {
+  if (rolesToCheck.length > 0 && !hasRole(rolesToCheck)) {
     return <>{fallback}</>;
   }
 

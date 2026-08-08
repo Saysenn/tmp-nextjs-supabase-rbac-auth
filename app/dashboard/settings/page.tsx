@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/context/UserContext';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser-client';
 
 type TabType = 'profile' | 'security' | 'account';
 
-export default function SettingsPage() {
+function SettingsContent() {
   const { user, loading } = useUser();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -554,5 +554,21 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function SettingsLoading() {
+  return (
+    <div className="flex items-center justify-center min-h-[400px]">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+    </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<SettingsLoading />}>
+      <SettingsContent />
+    </Suspense>
   );
 }

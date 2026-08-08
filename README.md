@@ -216,67 +216,80 @@ To disable 2FA:
 
 ## Role-Based Access Control (RBAC)
 
-This template includes a comprehensive, enterprise-grade role-based authentication system. **Everything is controlled from ONE file:** `lib/rbac/config.ts`.
+This template includes enterprise-grade RBAC with **Set-based permissions**. Everything is controlled from **ONE file:** `lib/rbac/config.ts`.
 
-### Quick Start - Adding Roles to Your Project
+**Key Features:**
+- Single config file for all roles and permissions
+- Set-based permissions for O(1) fast lookups
+- Support for **multiple roles per user**
+- Route-level and component-level access control
 
-**Step 1:** Edit `lib/rbac/config.ts` to define your roles:
+### Quick Start
+
+**Step 1:** Define permissions in `lib/rbac/config.ts`:
+
+```typescript
+export const PERMISSIONS = [
+  'User:Read', 'User:Write', 'User:Delete',
+  'Order:Create', 'Order:View',
+  'Report:View', 'Report:Export',
+] as const;
+```
+
+**Step 2:** Define roles with their permissions (using Set):
 
 ```typescript
 export const ROLES = {
-  SUPER_ADMIN: 'super_admin',
-  ADMIN: 'admin',
-  MANAGER: 'manager',
-  USER: 'user',
-  // Add your custom roles here
+  ADMIN: new Set([
+    'User:Read', 'User:Write', 'User:Delete',
+    'Order:Create', 'Order:View',
+    'Report:View', 'Report:Export',
+  ]),
+  AGENT: new Set([
+    'User:Read',
+    'Order:Create', 'Order:View',
+    'Report:View',
+  ]),
+  USER: new Set([
+    'Order:Create', 'Order:View',
+  ]),
 } as const;
 ```
 
-**Step 2:** Define which roles can access which routes:
+**Step 3:** Define route access:
 
 ```typescript
 export const ROUTE_ACCESS = {
-  '/dashboard/admin': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
-  '/dashboard/reports': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
-  '/dashboard': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER, ROLES.USER],
+  '/dashboard/admin': ['ADMIN'],
+  '/dashboard/analytics': ['ADMIN', 'AGENT'],
+  '/dashboard': ['ADMIN', 'AGENT', 'USER'],
 };
 ```
 
-**Step 3:** Define granular permissions:
-
-```typescript
-export const PERMISSIONS = {
-  'users:delete': [ROLES.SUPER_ADMIN],
-  'users:write': [ROLES.SUPER_ADMIN, ROLES.ADMIN],
-  'reports:view': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.MANAGER],
-};
-```
-
-**That's it!** The middleware automatically enforces route access, and you can use guards in components.
+**That's it!** The middleware automatically enforces access, and guards work in components.
 
 ### Assigning Roles to Users
 
-Roles are stored in Supabase `user_metadata`. Set them via:
+Roles are stored in Supabase `user_metadata.role`. Supports single role or multiple roles.
 
-**Option 1: Supabase Dashboard**
-1. Go to Authentication → Users
-2. Click on a user
-3. Edit `raw_user_meta_data` and add `"role": "admin"`
-
-**Option 2: SQL Query**
+**Single role:**
 ```sql
 UPDATE auth.users
-SET raw_user_meta_data = raw_user_meta_data || '{"role": "admin"}'
+SET raw_user_meta_data = raw_user_meta_data || '{"role": "ADMIN"}'
 WHERE email = 'admin@example.com';
 ```
 
-**Option 3: Admin API (for programmatic assignment)**
-```typescript
-// Server-side only - use service_role key
-const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-  user_metadata: { role: 'manager' }
-});
+**Multiple roles:**
+```sql
+UPDATE auth.users
+SET raw_user_meta_data = raw_user_meta_data || '{"role": ["ADMIN", "AGENT"]}'
+WHERE email = 'power-user@example.com';
 ```
+
+**Admin Dashboard:**
+1. Sign in as ADMIN
+2. Go to `/dashboard/admin/users`
+3. Change user roles via dropdown
 
 ### Using RBAC in Components
 
@@ -284,14 +297,20 @@ const { data, error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
 ```tsx
 import { useRBAC } from '@/hooks/useRBAC';
 
-function AdminPanel() {
-  const { role, hasPermission, hasRole, canAccess } = useRBAC();
+function MyComponent() {
+  const { roles, hasPermission, hasRole, hasAnyPermission } = useRBAC();
 
-  if (!hasPermission('users:delete')) {
-    return <p>You don't have permission to delete users.</p>;
+  if (hasPermission('User:Delete')) {
+    // Can delete users
   }
 
-  return <DeleteUserButton />;
+  if (hasRole('ADMIN')) {
+    // Is admin
+  }
+
+  if (hasAnyPermission(['Report:View', 'Report:Export'])) {
+    // Can view OR export reports
+  }
 }
 ```
 
@@ -300,41 +319,38 @@ function AdminPanel() {
 import { RoleGuard } from '@/components/rbac/RoleGuard';
 import { PermissionGuard } from '@/components/rbac/PermissionGuard';
 
-// Show only to specific roles
-<RoleGuard roles={['admin', 'super_admin']}>
+// Role-based
+<RoleGuard role="ADMIN">
   <AdminSettings />
 </RoleGuard>
 
-// Show only to users with specific permission
-<PermissionGuard permission="users:delete" fallback={<p>Access denied</p>}>
-  <DeleteUserButton />
+// Permission-based
+<PermissionGuard permission="User:Delete" fallback={<p>Access denied</p>}>
+  <DeleteButton />
+</PermissionGuard>
+
+// Multiple permissions (need ALL)
+<PermissionGuard permissions={['User:Read', 'User:Write']} requireAll>
+  <UserEditor />
 </PermissionGuard>
 ```
 
-### RBAC Architecture
+### Full Documentation
 
-```
-lib/rbac/
-├── config.ts        # EDIT THIS FILE - All roles, permissions, routes
-├── types.ts         # TypeScript types (auto-generated from config)
-├── utils.ts         # Helper functions (hasRole, hasPermission, etc.)
-└── index.ts         # Re-exports for clean imports
-
-components/rbac/
-├── RoleGuard.tsx    # Show/hide children based on role
-└── PermissionGuard.tsx  # Show/hide children based on permission
-
-hooks/
-└── useRBAC.ts       # Hook for role/permission checks
-```
+See **[/docs/rbac.md](docs/rbac.md)** for complete documentation including:
+- Adding new roles and permissions
+- Multiple roles per user
+- Route protection details
+- API endpoints
+- Troubleshooting
 
 ### Security Model
 
-1. **Server-side enforcement** - Middleware checks role on every request
+1. **Server-side enforcement** - Middleware checks roles on every request
 2. **Client-side UX** - Guards hide UI elements users can't access
 3. **Defense in depth** - Both layers work together
-4. **No role spoofing** - Roles are set by admins, not users during signup
-5. **Default role** - New users get `DEFAULT_ROLE` (configurable, defaults to `user`)
+4. **No role spoofing** - Roles are set by admins only
+5. **Default role** - New users get `DEFAULT_ROLE` (configurable, defaults to `USER`)
 
 ## Protected Routes
 

@@ -1,87 +1,127 @@
+import { User } from '@supabase/supabase-js';
 import {
   ROLES,
   ROLE_HIERARCHY,
-  PERMISSIONS,
   ROUTE_ACCESS,
   DEFAULT_ROLE,
 } from './config';
-import type { Role, Permission } from './types';
+import type { RoleName, Permission } from './types';
 
 /**
- * Get the hierarchy level for a role
+ * Get user's roles from Supabase user object.
+ * Supports both single role (string) and multiple roles (array).
+ * Normalizes roles to uppercase to match ROLES config.
+ * Returns array of valid role names.
  */
-export function getRoleLevel(role: Role | null | undefined): number {
-  if (!role) return 0;
-  return ROLE_HIERARCHY[role] ?? 0;
-}
+export function getUserRoles(user: User | null): RoleName[] {
+  if (!user) return [];
 
-/**
- * Check if a user has a specific role (exact match)
- */
-export function hasRole(
-  userRole: Role | null | undefined,
-  requiredRole: Role | Role[]
-): boolean {
-  if (!userRole) return false;
+  const roleData = user.user_metadata?.role;
 
-  if (Array.isArray(requiredRole)) {
-    return requiredRole.includes(userRole);
+  if (!roleData) {
+    return [DEFAULT_ROLE as RoleName];
   }
 
-  return userRole === requiredRole;
+  // Handle both single role (string) and multiple roles (array)
+  const roles = Array.isArray(roleData) ? roleData : [roleData];
+
+  // Normalize to uppercase and filter to only valid role names
+  const validRoles = roles
+    .map((role) => String(role).toUpperCase())
+    .filter((role): role is RoleName => role in ROLES);
+
+  // Return default role if no valid roles found
+  return validRoles.length > 0 ? validRoles : [DEFAULT_ROLE as RoleName];
 }
 
 /**
- * Check if user's role is at least the minimum required role (hierarchy-based)
+ * Get all permissions for a user based on their roles.
+ * Combines permissions from all roles the user has.
  */
-export function isRoleAtLeast(
-  userRole: Role | null | undefined,
-  minimumRole: Role
-): boolean {
-  if (!userRole) return false;
-  return getRoleLevel(userRole) >= getRoleLevel(minimumRole);
-}
+export function getUserPermissions(user: User | null): Permission[] {
+  const roles = getUserRoles(user);
 
-/**
- * Check if a user has a specific permission
- */
-export function hasPermission(
-  userRole: Role | null | undefined,
-  permission: Permission
-): boolean {
-  if (!userRole) return false;
+  if (roles.length === 0) return [];
 
-  const allowedRoles = PERMISSIONS[permission];
-  if (!allowedRoles) return false;
+  // Combine permissions from all roles using Set to dedupe
+  const permissionSet = new Set<Permission>();
 
-  return (allowedRoles as readonly string[]).includes(userRole);
-}
-
-/**
- * Get all permissions for a role
- */
-export function getPermissionsForRole(role: Role | null | undefined): Permission[] {
-  if (!role) return [];
-
-  const permissions: Permission[] = [];
-
-  for (const [permission, roles] of Object.entries(PERMISSIONS)) {
-    if ((roles as readonly string[]).includes(role)) {
-      permissions.push(permission as Permission);
+  for (const role of roles) {
+    const rolePermissions = ROLES[role];
+    if (rolePermissions) {
+      rolePermissions.forEach((permission) => {
+        permissionSet.add(permission as Permission);
+      });
     }
   }
 
-  return permissions;
+  return Array.from(permissionSet);
 }
 
 /**
- * Check if a user can access a specific route based on their role
+ * Check if user has a specific permission.
+ * Returns true if ANY of the user's roles has the permission.
  */
-export function canAccessRoute(
-  userRole: Role | null | undefined,
-  pathname: string
-): boolean {
-  if (!userRole) return false;
+export function hasPermission(user: User | null, permission: Permission): boolean {
+  const roles = getUserRoles(user);
+  return roles.some((role) => ROLES[role]?.has(permission));
+}
+
+/**
+ * Check if user has ANY of the specified permissions.
+ */
+export function hasAnyPermission(user: User | null, permissions: Permission[]): boolean {
+  return permissions.some((permission) => hasPermission(user, permission));
+}
+
+/**
+ * Check if user has ALL of the specified permissions.
+ */
+export function hasAllPermissions(user: User | null, permissions: Permission[]): boolean {
+  return permissions.every((permission) => hasPermission(user, permission));
+}
+
+/**
+ * Check if user has a specific role.
+ * Accepts single role or array of roles.
+ * Returns true if user has ANY of the specified roles.
+ */
+export function hasRole(user: User | null, role: RoleName | RoleName[]): boolean {
+  const userRoles = getUserRoles(user);
+
+  if (userRoles.length === 0) return false;
+
+  const rolesToCheck = Array.isArray(role) ? role : [role];
+  return rolesToCheck.some((r) => userRoles.includes(r));
+}
+
+/**
+ * Check if user's highest role is at least the specified minimum role.
+ * Based on ROLE_HIERARCHY values.
+ */
+export function isRoleAtLeast(user: User | null, minimumRole: RoleName): boolean {
+  const userRoles = getUserRoles(user);
+
+  if (userRoles.length === 0) return false;
+
+  const minLevel = ROLE_HIERARCHY[minimumRole] ?? 0;
+
+  // Get the highest role level from user's roles
+  const userMaxLevel = Math.max(
+    ...userRoles.map((role) => ROLE_HIERARCHY[role] ?? 0)
+  );
+
+  return userMaxLevel >= minLevel;
+}
+
+/**
+ * Check if user can access a specific route.
+ * Based on ROUTE_ACCESS configuration.
+ */
+export function canAccessRoute(user: User | null, pathname: string): boolean {
+  const userRoles = getUserRoles(user);
+
+  if (userRoles.length === 0) return false;
 
   // Sort routes by specificity (longer paths first)
   const sortedRoutes = Object.keys(ROUTE_ACCESS).sort(
@@ -92,29 +132,41 @@ export function canAccessRoute(
   for (const route of sortedRoutes) {
     if (pathname === route || pathname.startsWith(route + '/')) {
       const allowedRoles = ROUTE_ACCESS[route];
-      if (allowedRoles) {
-        return (allowedRoles as readonly string[]).includes(userRole);
-      }
+      // Check if user has any of the allowed roles
+      return allowedRoles.some((role) => userRoles.includes(role as RoleName));
     }
   }
 
-  // If no specific route rule found, allow access (route might not need role protection)
+  // No specific route config found - allow access
   return true;
 }
 
 /**
- * Get the role from user metadata with fallback to default role
+ * Get all available role names.
  */
-export function getRoleFromUser(user: { user_metadata?: { role?: string } } | null): Role {
-  const role = user?.user_metadata?.role;
+export function getAllRoles(): RoleName[] {
+  return Object.keys(ROLES) as RoleName[];
+}
 
-  // Validate that the role exists in our ROLES config
-  const validRoles = Object.values(ROLES) as string[];
-  if (role && validRoles.includes(role)) {
-    return role as Role;
-  }
+/**
+ * Get all permissions for a specific role.
+ */
+export function getRolePermissions(role: RoleName): Permission[] {
+  return Array.from(ROLES[role] || []) as Permission[];
+}
 
-  return DEFAULT_ROLE;
+/**
+ * Check if a role name is valid.
+ */
+export function isValidRole(role: string): role is RoleName {
+  return role in ROLES;
+}
+
+/**
+ * Get the display name for a role (capitalize first letter, lowercase rest).
+ */
+export function getRoleDisplayName(role: RoleName): string {
+  return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
 }
 
 /**
@@ -131,18 +183,4 @@ export function isProtectedRoute(pathname: string, protectedRoutes: string[]): b
  */
 export function isAuthRoute(pathname: string, authRoutes: string[]): boolean {
   return authRoutes.some((route) => pathname === route);
-}
-
-/**
- * Get all roles as an array
- */
-export function getAllRoles(): Role[] {
-  return Object.values(ROLES);
-}
-
-/**
- * Validate if a string is a valid role
- */
-export function isValidRole(role: string): role is Role {
-  return (Object.values(ROLES) as string[]).includes(role);
 }

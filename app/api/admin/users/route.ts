@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server-client';
 import { listAllUsers, updateUserRole, deleteUser } from '@/lib/supabase/admin-client';
 import { ROLES } from '@/lib/rbac/config';
-
-type Role = (typeof ROLES)[keyof typeof ROLES];
+import type { RoleName } from '@/lib/rbac/types';
 
 // Verify the requesting user is an admin
-async function verifyAdmin(request: NextRequest): Promise<{ isAdmin: boolean; error?: string }> {
+async function verifyAdmin(): Promise<{ isAdmin: boolean; error?: string }> {
   try {
     const supabase = await createSupabaseServerClient();
     const { data: { user }, error } = await supabase.auth.getUser();
@@ -15,10 +14,12 @@ async function verifyAdmin(request: NextRequest): Promise<{ isAdmin: boolean; er
       return { isAdmin: false, error: 'Unauthorized' };
     }
 
-    const userRole = user.user_metadata?.role as Role;
-    const adminRoles: Role[] = [ROLES.ADMIN];
+    // Get user's role and normalize to uppercase
+    const roleData = user.user_metadata?.role;
+    const userRole = roleData ? String(roleData).toUpperCase() : null;
 
-    if (!userRole || !adminRoles.includes(userRole)) {
+    // Check if user has ADMIN role
+    if (!userRole || userRole !== 'ADMIN') {
       return { isAdmin: false, error: 'Forbidden: Admin access required' };
     }
 
@@ -30,7 +31,7 @@ async function verifyAdmin(request: NextRequest): Promise<{ isAdmin: boolean; er
 
 // GET /api/admin/users - List all users
 export async function GET(request: NextRequest) {
-  const { isAdmin, error } = await verifyAdmin(request);
+  const { isAdmin, error } = await verifyAdmin();
 
   if (!isAdmin) {
     return NextResponse.json({ error }, { status: error === 'Unauthorized' ? 401 : 403 });
@@ -72,7 +73,7 @@ export async function GET(request: NextRequest) {
 
 // PATCH /api/admin/users - Update user role
 export async function PATCH(request: NextRequest) {
-  const { isAdmin, error } = await verifyAdmin(request);
+  const { isAdmin, error } = await verifyAdmin();
 
   if (!isAdmin) {
     return NextResponse.json({ error }, { status: error === 'Unauthorized' ? 401 : 403 });
@@ -114,7 +115,7 @@ export async function PATCH(request: NextRequest) {
 
 // DELETE /api/admin/users - Delete a user
 export async function DELETE(request: NextRequest) {
-  const { isAdmin, error } = await verifyAdmin(request);
+  const { isAdmin, error } = await verifyAdmin();
 
   if (!isAdmin) {
     return NextResponse.json({ error }, { status: error === 'Unauthorized' ? 401 : 403 });

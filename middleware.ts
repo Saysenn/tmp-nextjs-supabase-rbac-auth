@@ -5,19 +5,61 @@ import {
   PROTECTED_ROUTES,
   AUTH_ROUTES,
   LOGIN_REDIRECT,
-  DEFAULT_REDIRECT,
   UNAUTHORIZED_REDIRECT,
   DEFAULT_ROLE,
   ROLES,
 } from './lib/rbac/config';
 
-// Type for role
-type Role = (typeof ROLES)[keyof typeof ROLES];
+type RoleName = keyof typeof ROLES;
+
+/**
+ * Get user's roles from metadata.
+ * Normalizes to uppercase and validates against ROLES config.
+ */
+function getUserRoles(user: { user_metadata?: { role?: string | string[] } } | null): RoleName[] {
+  if (!user) return [];
+
+  const roleData = user.user_metadata?.role;
+
+  // No role set - return default role
+  if (!roleData) {
+    return [DEFAULT_ROLE as RoleName];
+  }
+
+  // Handle both single role (string) and multiple roles (array)
+  const roles = Array.isArray(roleData) ? roleData : [roleData];
+
+  // Normalize to uppercase and filter to valid roles
+  const validRoles = roles
+    .map((role) => String(role).toUpperCase())
+    .filter((role): role is RoleName => role in ROLES);
+
+  // If no valid roles found, return default
+  return validRoles.length > 0 ? validRoles : [DEFAULT_ROLE as RoleName];
+}
+
+/**
+ * Check if user has access to a route based on their roles.
+ */
+function canAccessRoute(userRoles: RoleName[], pathname: string): boolean {
+  // Sort routes by specificity (longer paths first)
+  const sortedRoutes = Object.keys(ROUTE_ACCESS).sort((a, b) => b.length - a.length);
+
+  // Find matching route config
+  for (const route of sortedRoutes) {
+    if (pathname === route || pathname.startsWith(route + '/')) {
+      const allowedRoles = ROUTE_ACCESS[route];
+      // Check if user has any of the allowed roles
+      return allowedRoles.some((role) => userRoles.includes(role as RoleName));
+    }
+  }
+
+  // No specific route config - allow access (route just requires auth)
+  return true;
+}
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  });
+  let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,9 +71,7 @@ export async function middleware(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          supabaseResponse = NextResponse.next({
-            request,
-          });
+          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           );
@@ -40,96 +80,63 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // IMPORTANT: Avoid writing any logic between createServerClient and
-  // supabase.auth.getUser(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
-
+  // Get authenticated user
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const url = request.nextUrl.clone();
   const pathname = request.nextUrl.pathname;
 
-  // Helper function to create redirect with cookies
+  // Helper to create redirect response
   const createRedirect = (path: string) => {
+    const url = request.nextUrl.clone();
     url.pathname = path;
-    const redirectResponse = NextResponse.redirect(url);
+    const response = NextResponse.redirect(url);
+    // Copy cookies to maintain session
     supabaseResponse.cookies.getAll().forEach((cookie) => {
-      redirectResponse.cookies.set(cookie.name, cookie.value, cookie);
+      response.cookies.set(cookie.name, cookie.value, cookie);
     });
-    return redirectResponse;
+    return response;
   };
 
-  // Check if current route is protected (requires authentication)
+  // Check route types
   const isProtectedRoute = PROTECTED_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(route + '/')
   );
-
-  // Check if current route is an auth route (should redirect if authenticated)
   const isAuthRoute = AUTH_ROUTES.some((route) => pathname === route);
 
-  // If not authenticated and trying to access protected route
+  // 1. Unauthenticated user trying to access protected route -> login
   if (!user && isProtectedRoute) {
     return createRedirect(LOGIN_REDIRECT);
   }
 
-  // If authenticated and trying to access auth routes, redirect to dashboard
+  // 2. Authenticated user on auth page -> redirect based on role
   if (user && isAuthRoute) {
-    return createRedirect(DEFAULT_REDIRECT);
+    const userRoles = getUserRoles(user);
+    // Admins go to admin dashboard, others go to user dashboard
+    const redirectPath = userRoles.includes('ADMIN') ? '/admin' : '/dashboard';
+    return createRedirect(redirectPath);
   }
 
-  // Role-based access control for authenticated users
+  // 3. Role-based access check for protected routes
   if (user && isProtectedRoute) {
-    // Get user's role from metadata
-    const userRole = (user.user_metadata?.role as Role) || DEFAULT_ROLE;
+    const userRoles = getUserRoles(user);
 
-    // Check role-based route access
-    // Sort routes by specificity (longer paths first)
-    const sortedRoutes = Object.keys(ROUTE_ACCESS).sort(
-      (a, b) => b.length - a.length
-    );
+    // Redirect admins from /dashboard to /admin
+    if (userRoles.includes('ADMIN') && pathname.startsWith('/dashboard')) {
+      return createRedirect('/admin');
+    }
 
-    // Find the most specific matching route
-    for (const route of sortedRoutes) {
-      if (pathname === route || pathname.startsWith(route + '/')) {
-        const allowedRoles = ROUTE_ACCESS[route];
-
-        if (allowedRoles && !allowedRoles.includes(userRole)) {
-          // User doesn't have permission - redirect to unauthorized page
-          return createRedirect(UNAUTHORIZED_REDIRECT);
-        }
-        // Found matching route and user has access - break out of loop
-        break;
-      }
+    if (!canAccessRoute(userRoles, pathname)) {
+      return createRedirect(UNAUTHORIZED_REDIRECT);
     }
   }
-
-  // IMPORTANT: You *must* return the supabaseResponse object as it is. If you're
-  // creating a new response object with NextResponse.next() make sure to:
-  // 1. Pass the request in it, like so:
-  //    const myNewResponse = NextResponse.next({ request })
-  // 2. Copy over the cookies, like so:
-  //    myNewResponse.cookies.setAll(supabaseResponse.cookies.getAll())
-  // 3. Change the myNewResponse object to fit your needs, but avoid changing
-  //    the cookies!
-  // 4. Finally:
-  //    return myNewResponse
-  // If this is not done, you may be causing the browser and server to go out
-  // of sync and terminate the user's session prematurely.
 
   return supabaseResponse;
 }
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * Feel free to modify this pattern to include more paths.
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };
